@@ -67,7 +67,7 @@ contract Project {
         creator = payable(msg.sender);
     }
 
-    function contribute() public payable {
+    function contribute() public payable { 
         require(state == State.Fundraising, "Not fundraising");
         require(msg.value >= minimumContribution, "Contribution amount is too low");
 
@@ -167,7 +167,7 @@ function getSummary()
     uint256 _targetContribution,
     uint256 _raisedAmount,
     uint256 _noOfContributors,
-    State   _state,
+    uint8   _state,
     uint256 _voteThreshold,
     bool    _defaultApproveIfNoVote
   )
@@ -179,8 +179,9 @@ function getSummary()
     targetContribution,
     raisedAmount,
     noOfContributors,
-    state,
+    uint8(state),
     voteThreshold,
     defaultApproveIfNoVote
   );
+}
 }
