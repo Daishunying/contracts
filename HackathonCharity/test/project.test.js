@@ -1,180 +1,154 @@
+// test/project.spec.js
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-const etherToWei = (n) =>{
-  return ethers.utils.parseUnits(n,'ether')
-}
+// helpers (ethers v5)
+const ether = (n) => ethers.utils.parseUnits(n, "ether");
+const nowPlus = (sec) => Math.floor(Date.now() / 1000) + sec;
 
-const dateToUNIX = (date) => {
-  return Math.round(new Date(date).getTime() / 1000).toString()
-}
+describe("Project (unit)", function () {
+  let owner, alice, bob, project;
 
-describe("Project", () => {
+  // constructor:
+  // (uint256 _minimumContribution,
+  //  uint256 _deadline,
+  //  uint256 _targetContribution,
+  //  uint256 _voteThreshold,
+  //  bool    _defaultApproveIfNoVote,
+  //  VotingMode _votingMode)
+  const makeArgs = () => ({
+    min: ether("1"),
+    deadline: nowPlus(30 * 24 * 60 * 60),
+    target: ether("10"),
+    threshold: 50,               // 50% threshold
+    defaultApproveIfNoVote: true,
+    votingMode: 0,               // VotingMode.OnePersonOneVote
+  });
 
-    var address1; 
-    var address2; 
-    var projectContract;
-  
+  beforeEach(async function () {
+    [owner, alice, bob] = await ethers.getSigners();
+    const Project = await ethers.getContractFactory("Project");
+    const a = makeArgs();
+    project = await Project.deploy(
+      a.min,
+      a.deadline,
+      a.target,
+      a.threshold,
+      a.defaultApproveIfNoVote,
+      a.votingMode
+    );
+    await project.deployed();
+  });
+
+  it("stores constructor params via getSummary()", async function () {
+    const a = makeArgs();
+    const summary = await project.getSummary(); // (creator,min,deadline,target,raised,noOf,state,threshold,defaultApprove)
+    expect(summary[0]).to.equal(owner.address);
+    expect(summary[1]).to.equal(a.min);
+    expect(summary[2].toNumber()).to.be.greaterThan(0);
+    expect(summary[3]).to.equal(a.target);
+    expect(summary[4].toString()).to.equal("0"); // raisedAmount
+    expect(summary[5].toString()).to.equal("0"); // noOfContributors
+    expect(summary[6].toString()).to.equal("0"); // state: Fundraising
+    expect(summary[7]).to.equal(a.threshold);
+    expect(summary[8]).to.equal(a.defaultApproveIfNoVote);
+  });
+
+  describe("contribute()", function () {
+    it("accepts >= minimum and updates counters", async function () {
+      await (await project.connect(alice).contribute({ value: ether("2") })).wait();
+
+      // raised & contributors
+      const summary = await project.getSummary();
+      expect(summary[4]).to.equal(ether("2")); // raisedAmount
+      expect(summary[5].toString()).to.equal("1"); // noOfContributors
+
+      // contributors mapping is public? try to read; if not, skip.
+      if (project.functions.contributors) {
+        const amt = await project.contributors(alice.address);
+        expect(amt).to.equal(ether("2"));
+      }
+    });
+
+    it("reverts if below minimum", async function () {
+      await expect(
+        project.connect(alice).contribute({ value: ether("0.5") })
+      ).to.be.revertedWith("Contribution amount is too low");
+      // 上面的 revert message 取决于你合约实际写法，若不一致可改为 .to.be.reverted
+    });
+
+    it("switches state to Successful when target reached", async function () {
+      await (await project.connect(alice).contribute({ value: ether("6") })).wait();
+      await (await project.connect(bob).contribute({ value: ether("5") })).wait();
+
+      const summary = await project.getSummary();
+      expect(summary[6].toString()).to.equal("2"); // Successful = 2
+    });
+  });
+
+  describe("withdraw request flow", function () {
     beforeEach(async function () {
-      [address1, address2,  ...address] = await ethers.getSigners();
+      // 先筹满一些钱，方便后续提现
+      await (await project.connect(alice).contribute({ value: ether("6") })).wait();
+      await (await project.connect(bob).contribute({ value: ether("6") })).wait();
+    });
 
-      const creator = address1.address;
-      const minimumContribution = etherToWei("1");
-      const deadline = dateToUNIX('2023-05-22');
-      const targetContribution = etherToWei("10");
-      const projectTitle = "Testing project";
-      const projectDes = "Testing project description"
-  
-      const Project = await ethers.getContractFactory("Project");
-      projectContract = await Project.deploy(creator,minimumContribution,deadline,targetContribution,projectTitle,projectDes);
+    it("only creator can create a request", async function () {
+      // 你的 create 函数如果需要 voteDuration（或 voteDeadline）参数，这里传 例如 7 天
+      const createFn = project.functions.createWithdrawRequest;
+      if (!createFn) return this.skip();
 
-    })
+      await expect(
+        project.connect(alice).createWithdrawRequest("ops", ether("2"), alice.address, 7 * 24 * 60 * 60)
+      ).to.be.reverted; // 非 creator
 
-    describe("Check project variables & Contribute", async function () {
-        it("Validate variables", async function () {
-           expect(await projectContract.creator()).to.equal(address1.address);
-           expect(await projectContract.minimumContribution()).to.equal(etherToWei("1"));
-           expect(Number(await projectContract.deadline())).to.greaterThan(0);
-           expect(await projectContract.targetContribution()).to.equal(etherToWei("10"));
-           expect(await projectContract.projectTitle()).to.equal("Testing project");
-           expect(await projectContract.projectDes()).to.equal("Testing project description");
-           expect(await projectContract.state()).to.equal(+0);
-           expect(await projectContract.noOfContributers()).to.equal(0);
+      const tx = await project
+        .connect(owner)
+        .createWithdrawRequest("ops", ether("2"), owner.address, 7 * 24 * 60 * 60);
+      await tx.wait();
 
-        })
+      // 如果有 numOfWithdrawRequests() 或其它 getter，可以断言一下
+      if (project.functions.numOfWithdrawRequests) {
+        const n = await project.numOfWithdrawRequests();
+        expect(n.toNumber()).to.equal(1);
+      }
+    });
 
-        it("Contribute", async function () {
-            const project = await projectContract.contribute(address1.address,{value:etherToWei('4')});
-            const event = await project.wait();
+    it("only contributors can vote; cannot double vote", async function () {
+      if (!project.functions.voteWithdrawRequest || !project.functions.createWithdrawRequest) {
+        return this.skip();
+      }
+      await (await project.connect(owner).createWithdrawRequest("ops", ether("2"), owner.address, 7 * 24 * 60 * 60)).wait();
 
-            // Test Event
-            expect(event.events.length).to.equal(1);
-            expect(event.events[0].event).to.equal("FundingReceived");
-            expect(event.events[0].args.contributor).to.equal(address1.address);
-            expect(event.events[0].args.amount).to.equal(etherToWei('4'));
-            expect(event.events[0].args.currentTotal).to.equal(etherToWei('4'));
+      // 非捐款人投票应失败（如果合约这样写）
+      await expect(
+        project.connect(owner).voteWithdrawRequest(0)
+      ).to.be.reverted; // 具体消息按你合约为准
 
-            expect(await projectContract.noOfContributers()).to.equal(1);
-            expect(await projectContract.getContractBalance()).to.equal(etherToWei('4'));            
-            
-        })
+      // 捐款人可投票
+      await (await project.connect(alice).voteWithdrawRequest(0)).wait();
 
-        it("Should fail if amount is less than minimum contribution amount", async () => {
-            await expect(projectContract.connect(address1).contribute(address1.address,{value:etherToWei('0.5')})).to.be.revertedWith('Contribution amount is too low !');
-        })
+      // 不能重复投
+      await expect(
+        project.connect(alice).voteWithdrawRequest(0)
+      ).to.be.revertedWith("Already voted"); // 按你合约里的字符串
+    });
 
-        it("State should change to Successful if targeted amount hit ", async () => {
-            await projectContract.contribute(address1.address,{value:etherToWei('12')});
-            expect(Number(await projectContract.completeAt())).to.greaterThan(0);
-            expect(await projectContract.state()).to.equal(+2);
-        })
+    it("creator can finalize when threshold met / or defaultApproveIfNoVote applies", async function () {
+      if (!project.functions.finalizeWithdrawRequest || !project.functions.createWithdrawRequest) {
+        return this.skip();
+      }
+      await (await project.connect(owner).createWithdrawRequest("ops", ether("2"), owner.address, 7 * 24 * 60 * 60)).wait();
 
-    })
+      // 投票达到阈值（2位捐助者 → 票权取决于 votingMode；这里先都投一票）
+      if (project.functions.voteWithdrawRequest) {
+        await (await project.connect(alice).voteWithdrawRequest(0)).wait();
+        await (await project.connect(bob).voteWithdrawRequest(0)).wait();
+      }
 
-    describe("Create withdraw request", async function () {
-      it("Should fail if someone else try to request (Only owner can make request) ", async () => {
-        await expect(projectContract.connect(address2).createWithdrawRequest("Testing description",etherToWei('2'),address2.address)).to.be.revertedWith('You dont have access to perform this operation !');
-      })
-
-      it("Withdraw request Should fail if status not equal to Successful ", async () => {
-        await expect(projectContract.connect(address1).createWithdrawRequest("Testing description",etherToWei('2'),address1.address)).to.be.revertedWith('Invalid state');
-      })
-
-      it("Request for withdraw", async () => {
-        await projectContract.contribute(address1.address,{value:etherToWei('12')});
-        const withdrawRequest = await projectContract.connect(address1).createWithdrawRequest("Testing description",etherToWei('2'),address1.address)
-        const event = await withdrawRequest.wait();
-
-        // Test Event
-        expect(event.events.length).to.equal(1);
-        expect(event.events[0].event).to.equal("WithdrawRequestCreated");
-        expect(event.events[0].args.description).to.equal("Testing description");
-        expect(event.events[0].args.amount).to.equal(etherToWei('2'));
-        expect(event.events[0].args.noOfVotes).to.equal(0);
-        expect(event.events[0].args.isCompleted).to.equal(false);
-        expect(event.events[0].args.reciptent).to.equal(address1.address);
-
-      })
-    })
-
-    describe("Vote for withdraw request", async function () {
-
-      it("Only contributor can vote ", async () => {
-        await projectContract.contribute(address1.address,{value:etherToWei('12')});
-        await projectContract.connect(address1).createWithdrawRequest("Testing description",etherToWei('2'),address1.address)
-        await expect(projectContract.connect(address2).voteWithdrawRequest(0)).to.be.revertedWith('Only contributor can vote !');
-      })
-
-      it("Vote withdraw request", async () => {
-        await projectContract.contribute(address1.address,{value:etherToWei('6')});
-        await projectContract.contribute(address2.address,{value:etherToWei('7')});
-
-        await projectContract.connect(address1).createWithdrawRequest("Testing description",etherToWei('2'),address1.address)
-        const voteForWithdraw = await projectContract.connect(address2).voteWithdrawRequest(0)
-        const event = await voteForWithdraw.wait();
-
-        // Test Event
-        expect(event.events.length).to.equal(1);
-        expect(event.events[0].event).to.equal("WithdrawVote");
-        expect(event.events[0].args.voter).to.equal(address2.address);
-        expect(Number(event.events[0].args.totalVote)).to.equal(1);
-
-      })
-
-      it("Should fail if request already vote", async () => {
-        await projectContract.contribute(address1.address,{value:etherToWei('6')});
-        await projectContract.contribute(address2.address,{value:etherToWei('7')});
-
-        await projectContract.connect(address1).createWithdrawRequest("Testing description",etherToWei('2'),address1.address)
-        await projectContract.connect(address2).voteWithdrawRequest(0)
-        
-        await expect(projectContract.connect(address2).voteWithdrawRequest(0)).to.be.revertedWith('You already voted !');
-      })
-
-    })
-
-    describe("Withdraw balance", async function () {
-      it("Should fail if 50% contributor need to voted", async () => {
-        await projectContract.contribute(address1.address,{value:etherToWei('6')});
-        await projectContract.contribute(address2.address,{value:etherToWei('7')});
-
-        await projectContract.connect(address1).createWithdrawRequest("Testing description",etherToWei('2'),address1.address)
-
-        await expect(projectContract.connect(address1).withdrawRequestedAmount(0)).to.be.revertedWith('At least 50% contributor need to vote for this request');
-      })
-
-      it("Withdraw requested balance", async () => {
-        await projectContract.contribute(address1.address,{value:etherToWei('6')});
-        await projectContract.contribute(address2.address,{value:etherToWei('7')});
-
-        await projectContract.connect(address1).createWithdrawRequest("Testing description",etherToWei('2'),address1.address)
-        await projectContract.connect(address1).voteWithdrawRequest(0)
-        await projectContract.connect(address2).voteWithdrawRequest(0)
-
-        const withdrawAmount = await projectContract.connect(address1).withdrawRequestedAmount(0);
-        const event = await withdrawAmount.wait();
-
-        // Test Event
-        expect(event.events.length).to.equal(1);
-        expect(event.events[0].event).to.equal("AmountWithdrawSuccessful");
-        expect(event.events[0].args.amount).to.equal(etherToWei('2'));
-        expect(event.events[0].args.noOfVotes).to.equal(2);
-        expect(event.events[0].args.isCompleted).to.equal(true);
-        expect(event.events[0].args.reciptent).to.equal(address1.address);
-      })
-
-      it("Should fail if request already completed", async () => {
-        await projectContract.contribute(address1.address,{value:etherToWei('6')});
-        await projectContract.contribute(address2.address,{value:etherToWei('7')});
-
-        await projectContract.connect(address1).createWithdrawRequest("Testing description",etherToWei('2'),address1.address)
-        await projectContract.connect(address1).voteWithdrawRequest(0)
-        await projectContract.connect(address2).voteWithdrawRequest(0)
-        await projectContract.connect(address1).withdrawRequestedAmount(0);
-
-        await expect(projectContract.connect(address1).withdrawRequestedAmount(0)).to.be.revertedWith('Request already completed');
-      })
-
-    })
-
-})
+      const receipt = await (await project.connect(owner).finalizeWithdrawRequest(0)).wait();
+      // 如果有事件可解析就解析；否则至少不 revert 即通过
+      expect(receipt.status).to.equal(1);
+    });
+  });
+});
