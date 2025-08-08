@@ -1,8 +1,7 @@
 require("dotenv").config();
 require("@nomiclabs/hardhat-ethers");
 require("@nomiclabs/hardhat-etherscan"); 
-// 如果装了 waffle，就加这一行
-// require("@nomiclabs/hardhat-waffle");
+require("@nomiclabs/hardhat-waffle");
 
 const { PRIVATE_KEY, ALCHEMY_API_KEY, ETHERSCAN_API_KEY } = process.env;
 
