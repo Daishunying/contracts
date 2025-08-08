@@ -1,5 +1,4 @@
 require("@nomiclabs/hardhat-ethers");
-require("@nomiclabs/hardhat-waffle");
 // const { ACCOUNT_PRIVATE_KEY,ALCHEMY_KEY } = process.env;
 
 module.exports = {
