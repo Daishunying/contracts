@@ -67,9 +67,9 @@ contract Project {
         creator = payable(msg.sender);
     }
 
-    function contribute() public payable {
+    function contribute() public payable { 
         require(state == State.Fundraising, "Not fundraising");
-        require(msg.value >= minimumContribution, "Amount below minimum");
+        require(msg.value >= minimumContribution, "Contribution amount is too low");
 
         if (contributors[msg.sender] == 0) {
             noOfContributors++;
@@ -113,31 +113,43 @@ contract Project {
         request.voteWeight += weight;
     }
 
-    function finalizeWithdrawRequest(uint256 index) public onlyCreator {
-        require(index < numOfWithdrawRequests, "Invalid index");
-        WithdrawRequest storage request = withdrawRequests[index];
-        require(!request.isCompleted, "Already completed");
-        
-        if (voteThreshold == 0) {
-            // DAO disabled: creator can withdraw directly
-            request.reciptent.transfer(request.amount);
-            request.isCompleted = true;
-            return;
-        }
+function finalizeWithdrawRequest(uint256 index) public onlyCreator {
+    require(index < numOfWithdrawRequests, "Invalid index");
+    WithdrawRequest storage request = withdrawRequests[index];
+    require(!request.isCompleted, "Already completed");
 
-        require(block.timestamp > request.voteDeadline, "Voting still active");
-
-        // Approval two modes: raisedAmount weight, contributors; default =true, all no vote seems as agree
-        uint256 voteBase = votingMode == VotingMode.WeightedByAmount
-            ? (defaultApproveIfNoVote ? raisedAmount : request.voteWeight)
-            : (defaultApproveIfNoVote ? noOfContributors : request.voteWeight);
-
-        uint256 threshold = voteBase * voteThreshold / 100;
-        require(request.voteWeight >= threshold, "Not enough approvals");
-
+    // 1) 关闭投票（阈值=0）→ 直接通过
+    if (voteThreshold == 0) {
         request.reciptent.transfer(request.amount);
         request.isCompleted = true;
+        return;
     }
+
+    // 2) 计算阈值基数
+    uint256 base = (votingMode == VotingMode.WeightedByAmount)
+        ? raisedAmount
+        : noOfContributors;
+    uint256 threshold = (base * voteThreshold) / 100;
+
+    // 3) 达到阈值 → 立刻通过（不需要等到 voteDeadline）
+    if (request.voteWeight >= threshold) {
+        request.reciptent.transfer(request.amount);
+        request.isCompleted = true;
+        return;
+    }
+
+    // 4) 未达阈值 → 仅当“无人投票 + 开启默认通过 + 已到期”才放行
+    if (defaultApproveIfNoVote) {
+        require(block.timestamp > request.voteDeadline, "Voting still active");
+        require(request.voteWeight == 0, "Votes present");
+        request.reciptent.transfer(request.amount);
+        request.isCompleted = true;
+        return;
+    }
+
+    // 5) 其他情况：不满足
+    revert("Not enough approvals");
+}
 
     function markExpired() public {
         require(block.timestamp > deadline, "Deadline not reached");
@@ -145,19 +157,30 @@ contract Project {
         state = State.Expired;
     }
 
-    function getProjectSummary() public view returns (
-        address, uint256, uint256, uint256, uint256, uint256, State, uint256, bool
-    ) {
-        return (
-            creator,
-            minimumContribution,
-            deadline,
-            targetContribution,
-            raisedAmount,
-            noOfContributors,
-            state,
-            voteThreshold,
-            defaultApproveIfNoVote
-        );
-    }
+function getSummary()
+  external
+  view
+  returns (
+    address _creator,
+    uint256 _minimumContribution,
+    uint256 _deadline,
+    uint256 _targetContribution,
+    uint256 _raisedAmount,
+    uint256 _noOfContributors,
+    State   _state,
+    uint256 _voteThreshold,
+    bool    _defaultApproveIfNoVote
+  )
+{
+  return (
+    creator,
+    minimumContribution,
+    deadline,
+    targetContribution,
+    raisedAmount,
+    noOfContributors,
+    state,
+    voteThreshold,
+    defaultApproveIfNoVote
+  );
 }
