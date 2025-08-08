@@ -3,7 +3,7 @@ require("@nomiclabs/hardhat-waffle");
 // const { ACCOUNT_PRIVATE_KEY,ALCHEMY_KEY } = process.env;
 
 module.exports = {
-  solidity: "0.8.4",
+  solidity: "0.8.20",
   // defaultNetwork: "rinkeby",
   paths: {
     artifacts: "./client/artifacts",
