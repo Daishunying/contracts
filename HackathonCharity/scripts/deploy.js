@@ -1,4 +1,4 @@
-// scripts/deploy.js
+// scripts/deploy.js (ethers v5 version)
 const hre = require("hardhat");
 const { artifacts, ethers, network } = hre;
 const fs = require("fs");
@@ -6,9 +6,9 @@ const path = require("path");
 
 /** ---- tweak here ---- */
 const CFG = {
-  minimumContribution: ethers.parseEther("0.01"),
+  minimumContribution: ethers.utils.parseEther("0.01"),
   deadlineOffsetSec: 30 * 24 * 60 * 60,  // 30 days
-  targetContribution: ethers.parseEther("5"),
+  targetContribution: ethers.utils.parseEther("5"),
   voteThreshold: 50,
   defaultApproveIfNoVote: true,
   votingMode: 0,                          // <-- set to your enum
@@ -30,7 +30,7 @@ const CFG = {
 
 async function computeDeadline() {
   const latest = await ethers.provider.getBlock("latest");
-  return BigInt(latest.timestamp) + BigInt(CFG.deadlineOffsetSec);
+  return latest.timestamp + CFG.deadlineOffsetSec; 
 }
 
 async function main() {
@@ -47,8 +47,8 @@ async function main() {
     const args = CFG.donationBadgeHasNameSymbol ? [CFG.badgeName, CFG.badgeSymbol] : [];
     const F = await ethers.getContractFactory("DonationBadge");
     const c = await F.deploy(...args);
-    await c.waitForDeployment();
-    const addr = await c.getAddress();
+    await c.deployed();
+    const addr = c.address;
     deployed.DonationBadge = c;
     const art = await artifacts.readArtifact("DonationBadge");
     frontendExport.DonationBadge = { address: addr, abi: art.abi };
@@ -59,8 +59,8 @@ async function main() {
   {
     const F = await ethers.getContractFactory("ProjectManager");
     const c = await F.deploy();
-    await c.waitForDeployment();
-    const addr = await c.getAddress();
+    await c.deployed();
+    const addr = c.address;
     deployed.ProjectManager = c;
     const art = await artifacts.readArtifact("ProjectManager");
     frontendExport.ProjectManager = { address: addr, abi: art.abi };
@@ -71,8 +71,8 @@ async function main() {
   {
     const F = await ethers.getContractFactory("Oneoff");
     const c = await F.deploy();
-    await c.waitForDeployment();
-    const addr = await c.getAddress();
+    await c.deployed();
+    const addr = c.address;
     deployed.Oneoff = c;
     const art = await artifacts.readArtifact("Oneoff");
     frontendExport.Oneoff = { address: addr, abi: art.abi };
@@ -93,8 +93,8 @@ async function main() {
       CFG.publicPool,
     ];
     const c = await F.deploy(...args);
-    await c.waitForDeployment();
-    const addr = await c.getAddress();
+    await c.deployed();
+    const addr = c.address;
     deployed.Ongoing = c;
     const art = await artifacts.readArtifact("Ongoing");
     frontendExport.Ongoing = { address: addr, abi: art.abi };
@@ -104,10 +104,9 @@ async function main() {
   // ---- optional: register Oneoff in ProjectManager ----
   if (CFG.registerOneoff && deployed.ProjectManager && deployed.Oneoff) {
     try {
-      const typeHash = ethers.id(CFG.oneoffTypeLabel);
-      const pm = deployed.ProjectManager;
-      if (typeof pm.registerProjectType === "function") {
-        const tx = await pm.registerProjectType(typeHash, await deployed.Oneoff.getAddress());
+      const typeHash = ethers.utils.id(CFG.oneoffTypeLabel);
+      if (deployed.ProjectManager.registerProjectType) {
+        const tx = await deployed.ProjectManager.registerProjectType(typeHash, deployed.Oneoff.address);
         await tx.wait();
         console.log(`Registered Oneoff with type ${CFG.oneoffTypeLabel}`);
       } else {
@@ -132,11 +131,11 @@ async function main() {
     );
     const receipt = await tx.wait();
 
-    // Try to parse ProjectStarted event (preferred), fallback to returnAllProjects()
     let projectAddr;
     try {
+      // v5: Interface 在 ethers.utils 下
       const oneoffAbi = (await artifacts.readArtifact("Oneoff")).abi;
-      const iface = new ethers.Interface(oneoffAbi); // ethers v6
+      const iface = new ethers.utils.Interface(oneoffAbi);
       for (const log of receipt.logs) {
         try {
           const parsed = iface.parseLog(log);
@@ -144,7 +143,7 @@ async function main() {
             projectAddr = parsed.args.projectContractAddress;
             break;
           }
-        } catch (_) { /* ignore non-matching logs */ }
+        } catch (_) {}
       }
     } catch (e) {
       console.log("Event parsing skipped:", e.message);
@@ -156,7 +155,6 @@ async function main() {
     }
     console.log("Demo Project created at:", projectAddr);
 
-    // Include DemoProject (ABI from Project.sol)
     const projectArt = await artifacts.readArtifact("Project");
     frontendExport.DemoProject = { address: projectAddr, abi: projectArt.abi };
   } catch (e) {
