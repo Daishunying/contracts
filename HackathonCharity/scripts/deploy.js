@@ -7,11 +7,11 @@ const path = require("path");
 /** ---- tweak here ---- */
 const CFG = {
   minimumContribution: ethers.parseEther("0.01"),
-  deadlineOffsetSec: 30 * 24 * 60 * 60,
-  targetContribution: ethers.parseEther("10"),
+  deadlineOffsetSec: 30 * 24 * 60 * 60,  // 30 days
+  targetContribution: ethers.parseEther("5"),
   voteThreshold: 50,
   defaultApproveIfNoVote: true,
-  votingMode: 0, // <- replace with your enum value if needed
+  votingMode: 0,                          // <-- set to your enum
   transferIntervalSec: 30 * 24 * 60 * 60,
   publicPool: "0x0000000000000000000000000000000000000000",
 
@@ -19,8 +19,12 @@ const CFG = {
   badgeName: "Donation Badge",
   badgeSymbol: "DBADGE",
 
-  registerOneoff: true,            // set true if you want to register Oneoff into ProjectManager
-  oneoffTypeLabel: "ONEOFF",       // used for hashing bytes32 type
+  registerOneoff: true,
+  oneoffTypeLabel: "ONEOFF",
+
+  // demo project meta
+  demoTitle: "Demo Oneoff Project",
+  demoDesc: "Auto-created by deploy script",
 };
 /** -------------------- */
 
@@ -38,11 +42,9 @@ async function main() {
   const frontendExport = {};
   const deadline = await computeDeadline();
 
-  // ---- DonationBadge (no-arg OR name/symbol) ----
+  // ---- DonationBadge ----
   {
-    const args = CFG.donationBadgeHasNameSymbol
-      ? [CFG.badgeName, CFG.badgeSymbol]
-      : [];
+    const args = CFG.donationBadgeHasNameSymbol ? [CFG.badgeName, CFG.badgeSymbol] : [];
     const F = await ethers.getContractFactory("DonationBadge");
     const c = await F.deploy(...args);
     await c.waitForDeployment();
@@ -53,7 +55,7 @@ async function main() {
     console.log("DonationBadge:", addr);
   }
 
-  // ---- ProjectManager (no-arg in your repo scan) ----
+  // ---- ProjectManager ----
   {
     const F = await ethers.getContractFactory("ProjectManager");
     const c = await F.deploy();
@@ -65,10 +67,10 @@ async function main() {
     console.log("ProjectManager:", addr);
   }
 
-  // ---- Oneoff (no constructor) ----
+  // ---- Oneoff (no args) ----
   {
     const F = await ethers.getContractFactory("Oneoff");
-    const c = await F.deploy(); // no args
+    const c = await F.deploy();
     await c.waitForDeployment();
     const addr = await c.getAddress();
     deployed.Oneoff = c;
@@ -77,7 +79,7 @@ async function main() {
     console.log("Oneoff:", addr);
   }
 
-  // ---- Ongoing (has 8 args) ----
+  // ---- Ongoing (8 args) ----
   {
     const F = await ethers.getContractFactory("Ongoing");
     const args = [
@@ -102,7 +104,7 @@ async function main() {
   // ---- optional: register Oneoff in ProjectManager ----
   if (CFG.registerOneoff && deployed.ProjectManager && deployed.Oneoff) {
     try {
-      const typeHash = ethers.id(CFG.oneoffTypeLabel); // keccak256("ONEOFF")
+      const typeHash = ethers.id(CFG.oneoffTypeLabel);
       const pm = deployed.ProjectManager;
       if (typeof pm.registerProjectType === "function") {
         const tx = await pm.registerProjectType(typeHash, await deployed.Oneoff.getAddress());
@@ -116,15 +118,25 @@ async function main() {
     }
   }
 
-  // ---- write for frontend ----
-  const outDir = path.join(__dirname, "../client/src/contracts");
-  fs.mkdirSync(outDir, { recursive: true });
-  const outPath = path.join(outDir, "deployedContracts.json");
-  fs.writeFileSync(outPath, JSON.stringify(frontendExport, null, 2));
-  console.log("Saved:", outPath);
-}
+  // ---- AUTO CREATE A DEMO PROJECT ON ONEOFF ----
+  try {
+    const tx = await deployed.Oneoff.createProject(
+      CFG.minimumContribution,
+      deadline,
+      CFG.targetContribution,
+      CFG.voteThreshold,
+      CFG.defaultApproveIfNoVote,
+      CFG.votingMode,
+      CFG.demoTitle,
+      CFG.demoDesc
+    );
+    const receipt = await tx.wait();
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+    // Try get the new Project address: prefer event, fallback to returnAllProjects()
+    let projectAddr;
+    const iface = new ethers.Interface((await artifacts.readArtifact("Oneoff")).abi);
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed && parsed.name === "ProjectStarted") {
+          pro
