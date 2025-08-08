@@ -1,18 +1,23 @@
-// const { ACCOUNT_PRIVATE_KEY,ALCHEMY_KEY } = process.env;
+require("dotenv").config();
 
 module.exports = {
-  solidity: "0.8.20",
-  // defaultNetwork: "rinkeby",
-  paths: {
-    artifacts: "./client/artifacts",
+  solidity: {
+    version: "0.8.20",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200,
+      },
+    },
   },
   networks: {
-    hardhat: {
-      chainId: 31337
+    holesky: {
+      url: process.env.HOLESKY_RPC || "https://holesky.infura.io/v3/" + process.env.INFURA_KEY,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 17000,
     },
-    // rinkeby: {
-    //   url: `https://eth-rinkeby.alchemyapi.io/v2/${ALCHEMY_KEY}`,
-    //   accounts: [`0x${ACCOUNT_PRIVATE_KEY}`]
-    // }
+    hardhat: {
+      chainId: 31337,
+    },
   },
 };
