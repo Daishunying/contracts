@@ -132,11 +132,46 @@ async function main() {
     );
     const receipt = await tx.wait();
 
-    // Try get the new Project address: prefer event, fallback to returnAllProjects()
+    // Try to parse ProjectStarted event (preferred), fallback to returnAllProjects()
     let projectAddr;
-    const iface = new ethers.Interface((await artifacts.readArtifact("Oneoff")).abi);
-    for (const log of receipt.logs) {
-      try {
-        const parsed = iface.parseLog(log);
-        if (parsed && parsed.name === "ProjectStarted") {
-          pro
+    try {
+      const oneoffAbi = (await artifacts.readArtifact("Oneoff")).abi;
+      const iface = new ethers.Interface(oneoffAbi); // ethers v6
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog(log);
+          if (parsed && parsed.name === "ProjectStarted") {
+            projectAddr = parsed.args.projectContractAddress;
+            break;
+          }
+        } catch (_) { /* ignore non-matching logs */ }
+      }
+    } catch (e) {
+      console.log("Event parsing skipped:", e.message);
+    }
+
+    if (!projectAddr) {
+      const all = await deployed.Oneoff.returnAllProjects();
+      projectAddr = all[all.length - 1];
+    }
+    console.log("Demo Project created at:", projectAddr);
+
+    // Include DemoProject (ABI from Project.sol)
+    const projectArt = await artifacts.readArtifact("Project");
+    frontendExport.DemoProject = { address: projectAddr, abi: projectArt.abi };
+  } catch (e) {
+    console.log("Auto create demo project skipped/failed:", e.message);
+  }
+
+  // ---- write for frontend ----
+  const outDir = path.join(__dirname, "../client/src/contracts");
+  fs.mkdirSync(outDir, { recursive: true });
+  const outPath = path.join(outDir, "deployedContracts.json");
+  fs.writeFileSync(outPath, JSON.stringify(frontendExport, null, 2));
+  console.log("Saved:", outPath);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
